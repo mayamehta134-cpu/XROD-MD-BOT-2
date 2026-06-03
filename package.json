@@ -1,11 +1,9 @@
 {
-  "name": "xrod-md-complete-bot",
+  "name": "xrod-md-universal-bot",
   "version": "1.0.0",
-  "description": "XROD MD - Complete WhatsApp Bot + Telegram Pairing Bot",
+  "description": "XROD MD Universal WhatsApp Bot - All Countries Pair System + Telegram Pairing",
   "main": "index.js",
   "scripts": {
-    "start-wa": "node index.js",
-    "start-tg": "node telegram.js",
     "start": "node index.js"
   },
   "keywords": [
@@ -13,16 +11,19 @@
     "telegram-bot",
     "baileys",
     "telegraf",
-    "xrod-md"
+    "whatsapp-pairing",
+    "all-countries"
   ],
   "author": "XROD",
   "license": "MIT",
   "dependencies": {
     "@whiskeysockets/baileys": "^6.6.0",
-    "qrcode-terminal": "^0.12.0",
-    "pino": "^8.17.2",
-    "fs-extra": "^11.2.0",
     "telegraf": "^4.15.3",
-    "axios": "^1.6.0"
+    "pino": "^8.17.2",
+    "qrcode-terminal": "^0.12.0",
+    "fs-extra": "^11.2.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
