@@ -1,21 +1,58 @@
 const { Telegraf, Markup } = require('telegraf');
-const { default: makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const Pino = require('pino');
 const fs = require('fs');
 const path = require('path');
+const qrcode = require('qrcode-terminal');
 
 // =============== CONFIGURATION ===============
-const BOT_TOKEN = '8155564776:AAF2nJqNrFQpB3hBpJk9LpVpQ2Xp3VpQ2X'; // 🔥 APNA TOKEN DALO
-const WHATSAPP_CHANNEL_LINK = 'https://whatsapp.com/channel/xxxxxxxxx';
-const WHATSAPP_GROUP_LINK = 'https://chat.whatsapp.com/xxxxxxxx';
+const BOT_TOKEN = '8727180497:AAEEa4tCJ0lWHyc8DmnydKXvJzMeenCwgH8';
+const WHATSAPP_CHANNEL_LINK = 'https://whatsapp.com/channel/0029VbCWpej7oQhWH4A2HK2k';
+const PREFIX = ".";
 
-// Create sessions folder
+// Create folders
 if (!fs.existsSync('./sessions')) fs.mkdirSync('./sessions');
 
-const bot = new Telegraf(BOT_TOKEN);
-const sessions = new Map();
+// Store plugins
+let plugins = new Map();
 
-// =============== /START COMMAND ===============
+// Load all plugins from Plugins folder
+function loadPlugins() {
+    const pluginsPath = path.join(__dirname, 'Plugins');
+    if (!fs.existsSync(pluginsPath)) {
+        console.log('⚠️ Plugins folder not found!');
+        return;
+    }
+    
+    const files = fs.readdirSync(pluginsPath);
+    let loadedCount = 0;
+    
+    for (const file of files) {
+        if (file.endsWith('.js')) {
+            try {
+                const plugin = require(`./Plugins/${file}`);
+                if (plugin.name) {
+                    plugins.set(plugin.name, plugin);
+                    if (plugin.alias && Array.isArray(plugin.alias)) {
+                        plugin.alias.forEach(alias => {
+                            plugins.set(alias, plugin);
+                        });
+                    }
+                    loadedCount++;
+                    console.log(`✅ Loaded: ${file}`);
+                }
+            } catch(e) {
+                console.log(`❌ Error loading ${file}`);
+            }
+        }
+    }
+    console.log(`\n📦 Total ${loadedCount} plugins loaded!\n`);
+}
+
+// =============== TELEGRAM BOT ===============
+const bot = new Telegraf(BOT_TOKEN);
+const telegramSessions = new Map();
+
 bot.start((ctx) => {
     ctx.reply(`
 ╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
@@ -25,24 +62,22 @@ bot.start((ctx) => {
 🌟 *Welcome to XROD Pairing Bot!*
 
 🔹 *Get WhatsApp 8-digit pairing code*
-🔹 *Join our WhatsApp channel for updates*
-🔹 *Fast & Free service*
+🔹 *Scan QR code to pair WhatsApp*
 
 📌 *Commands:*
 /pair 923xxxxxxxxx - Get pairing code
+/qr - Get QR code instructions
 /status - Check bot status
-/help - Show help menu
 
 *Made with ❤️ by XROD*
     `, Markup.inlineKeyboard([
         [Markup.button.url('📱 JOIN WHATSAPP CHANNEL', WHATSAPP_CHANNEL_LINK)],
-        [Markup.button.url('👥 JOIN WHATSAPP GROUP', WHATSAPP_GROUP_LINK)],
         [Markup.button.callback('🔐 GET PAIRING CODE', 'get_pairing')],
+        [Markup.button.callback('📱 GET QR CODE', 'get_qr')],
         [Markup.button.callback('📊 CHECK STATUS', 'check_status')]
     ]));
 });
 
-// =============== BUTTON HANDLERS ===============
 bot.action('get_pairing', async (ctx) => {
     await ctx.answerCbQuery();
     ctx.reply(`
@@ -50,16 +85,29 @@ bot.action('get_pairing', async (ctx) => {
 ┃     🔐 GET PAIRING CODE 🔐         ┃
 ╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
 
-📱 *Send your WhatsApp number in this format:*
+📱 *Send your WhatsApp number:*
 
 \`/pair 923001234567\`
 
-📌 *Country Codes:*
 🇵🇰 Pakistan: 923xxxxxxxxx
-🇮🇳 India: 91xxxxxxxxxx
 🇺🇸 USA: 1xxxxxxxxxx
+    `);
+});
 
-*Example:* /pair 923001234567
+bot.action('get_qr', async (ctx) => {
+    await ctx.answerCbQuery();
+    ctx.reply(`
+╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
+┃        📱 QR CODE METHOD 📱        ┃
+╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
+
+📌 *Scan QR code from terminal:*
+1. Open WhatsApp
+2. Settings → Linked Devices
+3. Tap "Link a Device"
+4. Scan QR code
+
+✅ *Works for ALL countries!*
     `);
 });
 
@@ -70,87 +118,41 @@ bot.action('check_status', async (ctx) => {
 ┃          📊 BOT STATUS            ┃
 ╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
 
-✅ *Bot is online & working!*
-🤖 *Service:* WhatsApp Pairing
-📱 *Method:* 8-Digit Code
-⚡ *Status:* Active
-👥 *Active sessions:* ${sessions.size}
-
-📌 *Use /pair your_number*
+✅ *Bot is online!*
+👥 *Active sessions:* ${telegramSessions.size}
+🌍 *QR code works for ALL countries!*
     `);
 });
 
-// =============== /HELP COMMAND ===============
 bot.command('help', (ctx) => {
     ctx.reply(`
-╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃           📚 HELP MENU            ┃
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-
 📌 *Commands:*
-/pair 923xxxxxxxxx - Get 8-digit pairing code
-/status - Check bot status
-/help - Show this menu
-
-📱 *How to pair WhatsApp:*
-1️⃣ Send /pair your_number
-2️⃣ Get 8-digit code
-3️⃣ Open WhatsApp → Linked Devices
-4️⃣ Tap "Link a Device"
-5️⃣ Enter the 8-digit code
-
-⚠️ *Note:* Code expires in 2 minutes!
-    `, Markup.inlineKeyboard([
-        [Markup.button.url('📱 JOIN WHATSAPP CHANNEL', WHATSAPP_CHANNEL_LINK)],
-        [Markup.button.callback('🔐 GET PAIRING CODE', 'get_pairing')]
-    ]));
-});
-
-// =============== /STATUS COMMAND ===============
-bot.command('status', (ctx) => {
-    ctx.reply(`
-╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃          📊 BOT STATUS            ┃
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-
-✅ *Bot is online!*
-🤖 *Service:* WhatsApp Pairing
-📱 *Method:* 8-Digit Code
-⚡ *Status:* Working
-👥 *Active sessions:* ${sessions.size}
-
-📌 *Use:* /pair 923xxxxxxxxx
+/pair 923xxxxxxxxx - Get pairing code
+/qr - QR code instructions
+/status - Bot status
     `);
 });
 
-// =============== /PAIR COMMAND ===============
+bot.command('status', (ctx) => {
+    ctx.reply(`✅ Bot online! 👥 ${telegramSessions.size} active sessions`);
+});
+
+bot.command('qr', (ctx) => {
+    ctx.reply(`📱 Scan QR code from terminal → WhatsApp → Linked Devices → Link a Device`);
+});
+
 bot.command('pair', async (ctx) => {
     const args = ctx.message.text.split(' ');
     if (args.length < 2) {
-        return ctx.reply(`
-❌ *Invalid format!*
-
-📌 *Usage:* /pair 923xxxxxxxxx
-
-*Examples:*
-🇵🇰 /pair 923001234567
-🇮🇳 /pair 911234567890
-🇺🇸 /pair 11234567890
-        `);
+        return ctx.reply(`❌ Usage: /pair 923xxxxxxxxx`);
     }
     
     let number = args[1].replace(/\D/g, '');
-    
-    // Auto-add country code if missing
-    if (!number.startsWith('92') && !number.startsWith('91') && !number.startsWith('1')) {
-        number = '92' + number;
-    }
-    
     if (number.length < 10 || number.length > 15) {
-        return ctx.reply('❌ *Invalid number!*\n\nUse format: 923xxxxxxxxx (Pakistan) or 91xxxxxxxxxx (India)');
+        return ctx.reply('❌ Invalid number!');
     }
     
-    const msg = await ctx.reply(`🔄 *Generating pairing code for* +${number}...\n⏳ Please wait...`);
+    const msg = await ctx.reply(`🔄 Generating code for +${number}...`);
     
     try {
         const sessionId = `session_${number}_${Date.now()}`;
@@ -167,89 +169,144 @@ bot.command('pair', async (ctx) => {
         
         sock.ev.on('creds.update', saveCreds);
         
-        // Store session for cleanup
-        sessions.set(sessionId, setTimeout(() => {
-            try {
-                fs.rmSync(sessionPath, { recursive: true, force: true });
-                sessions.delete(sessionId);
-            } catch(e) {}
+        telegramSessions.set(sessionId, setTimeout(() => {
+            try { fs.rmSync(sessionPath, { recursive: true, force: true }); telegramSessions.delete(sessionId); } catch(e) {}
         }, 120000));
         
-        // Generate pairing code
         setTimeout(async () => {
             try {
                 const code = await sock.requestPairingCode(number);
-                
                 await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `
-╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃     🔐 YOUR PAIRING CODE 🔐        ┃
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
+🔐 YOUR PAIRING CODE: ${code}
 
-\`\`\`
-👉 ${code} 👈
-\`\`\`
+HOW TO PAIR:
+1. Open WhatsApp
+2. Linked Devices
+3. Link a Device
+4. Enter: ${code}
 
-╭━━━〔 📱 HOW TO PAIR 〕━━━⬣
-┃ 1️⃣ Open WhatsApp
-┃ 2️⃣ Three Dots → Linked Devices
-┃ 3️⃣ Tap "Link a Device"
-┃ 4️⃣ Enter code: *${code}*
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-
-✅ *Valid for 2 minutes*
-📱 *Number:* +${number}
-⚡ *Expires in:* 2 minutes
-
-⚠️ *Don't share this code with anyone!*
-                `, { parse_mode: 'Markdown' });
-                
-            } catch (err) {
-                await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `
-❌ *Failed to generate code!*
-
-📌 *Possible reasons:*
-• Invalid WhatsApp number
-• Number not registered on WhatsApp
-
-📱 *Try again:* /pair 923xxxxxxxxx
+✅ Valid for 2 minutes
                 `);
+            } catch (err) {
+                await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Failed! Try QR code method: /qr`);
             }
         }, 3000);
         
     } catch (err) {
-        await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `
-❌ *Error!* Please try again.
-
-📱 *Usage:* /pair 923xxxxxxxxx
-        `);
+        await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Error! Try /qr`);
     }
 });
 
-// =============== START BOT ===============
-bot.launch().then(() => {
-    console.log('\n╔════════════════════════════════════════╗');
-    console.log('║     🤖 TELEGRAM BOT STARTED 🤖        ║');
-    console.log('╚════════════════════════════════════════╝');
-    console.log(`\n✅ Bot is running!`);
-    console.log(`📱 WhatsApp Pairing System Active\n`);
-});
+// =============== WHATSAPP BOT ===============
+async function startWhatsAppBot() {
+    loadPlugins();
+    
+    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
+    
+    const sock = makeWASocket({
+        auth: state,
+        logger: Pino({ level: 'silent' }),
+        browser: ['XROD MD', 'Chrome', '1.0.0']
+    });
+    
+    sock.ev.on('creds.update', saveCreds);
+    
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
+        
+        if (qr) {
+            console.log('\n📱 SCAN THIS QR CODE WITH WHATSAPP\n');
+            qrcode.generate(qr, { small: true });
+            console.log('\n1. Open WhatsApp → Linked Devices → Link a Device\n');
+        }
+        
+        if (connection === 'open') {
+            console.log('\n✅ WHATSAPP BOT CONNECTED!\n📌 Try: .menu on WhatsApp\n');
+        }
+        
+        if (connection === 'close') {
+            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            if (shouldReconnect) setTimeout(startWhatsAppBot, 3000);
+        }
+    });
+    
+    // WhatsApp Command Handler
+    sock.ev.on('messages.upsert', async ({ messages }) => {
+        const msg = messages[0];
+        if (!msg.message) return;
+        
+        const from = msg.key.remoteJid;
+        const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+        
+        if (!text.startsWith(PREFIX)) return;
+        
+        const args = text.slice(PREFIX.length).trim().split(/ +/);
+        const command = args.shift().toLowerCase();
+        
+        // Check plugins first
+        if (plugins.has(command)) {
+            const plugin = plugins.get(command);
+            try {
+                await plugin.run({
+                    XROD: sock, m: msg, inputCMD: command, text: args.join(' '), from,
+                    conn: sock, message: msg,
+                    reply: async (txt) => await sock.sendMessage(from, { text: txt })
+                });
+            } catch(e) { console.log(e); }
+            return;
+        }
+        
+        // .menu command
+        if (command === 'menu') {
+            const menu = `
+╭━━━〔 XROD MD BOT 〕━━━⬣
+┃ 👑 .ownermenu
+┃ 🤖 .aimenu
+┃ 🎮 .funmenu
+┃ 🔥 .roastmenu
+┃ 🎵 .mediamenu
+┃ 📥 .downloadmenu
+┃ 🔍 .searchmenu
+┃ 🛠️ .toolsmenu
+┃ 👥 .groupmenu
+┃ ⚙️ .settingsmenu
+┃ 🎨 .logomenu
+┃ 📝 .textpromenu
+┃ 😂 .mememenu
+┃ 🎲 .randommenu
+┃ 💰 .economymenu
+┃ 🏆 .gamesmenu
+┃ 📊 .stalkmenu
+┃ 🌐 .convertmenu
+┃ 📚 .educationmenu
+┃ 💎 .premiummenu
+╰━━━━━━━━━━━━━━⬣
 
-// Graceful shutdown
-process.once('SIGINT', () => {
-    for (const [id, timeout] of sessions) {
-        clearTimeout(timeout);
-        try {
-            fs.rmSync(`./sessions/${id}`, { recursive: true, force: true });
-        } catch(e) {}
-    }
-    bot.stop('SIGINT');
-});
-process.once('SIGTERM', () => {
-    for (const [id, timeout] of sessions) {
-        clearTimeout(timeout);
-        try {
-            fs.rmSync(`./sessions/${id}`, { recursive: true, force: true });
-        } catch(e) {}
-    }
-    bot.stop('SIGTERM');
+> Type .[menu_name] to open any menu
+            `;
+            await sock.sendMessage(from, { text: menu });
+        }
+        
+        else if (command === 'ping') {
+            await sock.sendMessage(from, { text: '🏓 Pong! Bot is active' });
+        }
+        
+        else if (command === 'owner') {
+            await sock.sendMessage(from, { text: '👑 Bot Owner: XROD' });
+        }
+        
+        else if (command === 'channel') {
+            await sock.sendMessage(from, { text: `📢 Join: ${WHATSAPP_CHANNEL_LINK}` });
+        }
+        
+        else {
+            await sock.sendMessage(from, { text: `❌ Command "${command}" not found!\n\nType .menu for available commands.` });
+        }
+    });
+}
+
+// Start both bots
+Promise.all([startWhatsAppBot(), bot.launch()]).then(() => {
+    console.log('\n✅ TELEGRAM BOT STARTED');
+    console.log('✅ WHATSAPP BOT STARTED\n');
 });
