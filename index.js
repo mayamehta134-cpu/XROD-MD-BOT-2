@@ -3,50 +3,35 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = requi
 const Pino = require('pino');
 const fs = require('fs');
 const path = require('path');
-const qrcode = require('qrcode-terminal');
+const qrcode = require('qrcode');
 
-// =============== CONFIGURATION ===============
 const BOT_TOKEN = '8727180497:AAEEa4tCJ0lWHyc8DmnydKXvJzMeenCwgH8';
 const WHATSAPP_CHANNEL_LINK = 'https://whatsapp.com/channel/0029VbCWpej7oQhWH4A2HK2k';
 const PREFIX = ".";
 
-// Create folders
 if (!fs.existsSync('./sessions')) fs.mkdirSync('./sessions');
+if (!fs.existsSync('./temp')) fs.mkdirSync('./temp');
 
-// Store plugins
 let plugins = new Map();
+let currentQR = null;
+let whatsappSock = null;
 
-// Load all plugins from Plugins folder
 function loadPlugins() {
     const pluginsPath = path.join(__dirname, 'Plugins');
-    if (!fs.existsSync(pluginsPath)) {
-        console.log('⚠️ Plugins folder not found!');
-        return;
-    }
-    
+    if (!fs.existsSync(pluginsPath)) return;
     const files = fs.readdirSync(pluginsPath);
-    let loadedCount = 0;
-    
     for (const file of files) {
         if (file.endsWith('.js')) {
             try {
                 const plugin = require(`./Plugins/${file}`);
                 if (plugin.name) {
                     plugins.set(plugin.name, plugin);
-                    if (plugin.alias && Array.isArray(plugin.alias)) {
-                        plugin.alias.forEach(alias => {
-                            plugins.set(alias, plugin);
-                        });
-                    }
-                    loadedCount++;
-                    console.log(`✅ Loaded: ${file}`);
+                    if (plugin.alias) plugin.alias.forEach(alias => plugins.set(alias, plugin));
                 }
-            } catch(e) {
-                console.log(`❌ Error loading ${file}`);
-            }
+                console.log(`✅ Loaded: ${file}`);
+            } catch(e) {}
         }
     }
-    console.log(`\n📦 Total ${loadedCount} plugins loaded!\n`);
 }
 
 // =============== TELEGRAM BOT ===============
@@ -54,7 +39,10 @@ const bot = new Telegraf(BOT_TOKEN);
 const telegramSessions = new Map();
 
 bot.start((ctx) => {
-    ctx.reply(`
+    ctx.replyWithPhoto(
+        'https://graph.org/file/02abf0fd8fc2a13cc67a1.jpg',
+        {
+            caption: `
 ╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
 ┃     🤖 XROD PAIRING BOT 🤖         ┃
 ╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
@@ -62,74 +50,90 @@ bot.start((ctx) => {
 🌟 *Welcome to XROD Pairing Bot!*
 
 🔹 *Get WhatsApp 8-digit pairing code*
-🔹 *Scan QR code to pair WhatsApp*
+🔹 *Get QR code photo to scan*
 
 📌 *Commands:*
 /pair 923xxxxxxxxx - Get pairing code
-/qr - Get QR code instructions
+/qr - Get QR code photo
 /status - Check bot status
 
 *Made with ❤️ by XROD*
-    `, Markup.inlineKeyboard([
-        [Markup.button.url('📱 JOIN WHATSAPP CHANNEL', WHATSAPP_CHANNEL_LINK)],
-        [Markup.button.callback('🔐 GET PAIRING CODE', 'get_pairing')],
-        [Markup.button.callback('📱 GET QR CODE', 'get_qr')],
-        [Markup.button.callback('📊 CHECK STATUS', 'check_status')]
-    ]));
+            `,
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '📱 JOIN WHATSAPP CHANNEL', url: WHATSAPP_CHANNEL_LINK }],
+                    [{ text: '🔐 GET PAIRING CODE', callback_data: 'get_pairing' }],
+                    [{ text: '📱 GET QR CODE PHOTO', callback_data: 'get_qr' }],
+                    [{ text: '📊 CHECK STATUS', callback_data: 'check_status' }]
+                ]
+            }
+        }
+    );
 });
 
 bot.action('get_pairing', async (ctx) => {
     await ctx.answerCbQuery();
     ctx.reply(`
-╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃     🔐 GET PAIRING CODE 🔐         ┃
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
+🔐 *Get Pairing Code*
 
-📱 *Send your WhatsApp number:*
-
+Send your WhatsApp number:
 \`/pair 923001234567\`
 
 🇵🇰 Pakistan: 923xxxxxxxxx
 🇺🇸 USA: 1xxxxxxxxxx
+🇬🇧 UK: 44xxxxxxxxxx
+🇦🇪 UAE: 971xxxxxxxxx
     `);
 });
 
 bot.action('get_qr', async (ctx) => {
     await ctx.answerCbQuery();
-    ctx.reply(`
-╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃        📱 QR CODE METHOD 📱        ┃
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
+    
+    if (currentQR) {
+        const qrBuffer = await qrcode.toBuffer(currentQR);
+        await ctx.replyWithPhoto(
+            { source: qrBuffer },
+            {
+                caption: `
+📱 *SCAN THIS QR CODE*
 
-📌 *Scan QR code from terminal:*
 1. Open WhatsApp
-2. Settings → Linked Devices
+2. Tap Three Dots (⋮) → Linked Devices
 3. Tap "Link a Device"
-4. Scan QR code
+4. Scan this QR code
 
 ✅ *Works for ALL countries!*
-    `);
+⚠️ *Valid for 2 minutes*
+                `
+            }
+        );
+    } else {
+        ctx.reply(`
+❌ *QR code not available!*
+
+Please wait for bot to generate QR code.
+Make sure WhatsApp bot is running on server.
+
+Try again in a few seconds.
+        `);
+    }
 });
 
 bot.action('check_status', async (ctx) => {
     await ctx.answerCbQuery();
     ctx.reply(`
-╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
-┃          📊 BOT STATUS            ┃
-╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
-
-✅ *Bot is online!*
-👥 *Active sessions:* ${telegramSessions.size}
-🌍 *QR code works for ALL countries!*
+✅ *Bot online!*
+👥 Active sessions: ${telegramSessions.size}
+📱 QR available: ${currentQR ? '✅ Yes' : '❌ No'}
     `);
 });
 
 bot.command('help', (ctx) => {
     ctx.reply(`
 📌 *Commands:*
-/pair 923xxxxxxxxx - Get pairing code
-/qr - QR code instructions
-/status - Bot status
+/pair 923xxxxxxxxx - Get 8-digit pairing code
+/qr - Get QR code photo to scan
+/status - Check bot status
     `);
 });
 
@@ -137,8 +141,24 @@ bot.command('status', (ctx) => {
     ctx.reply(`✅ Bot online! 👥 ${telegramSessions.size} active sessions`);
 });
 
-bot.command('qr', (ctx) => {
-    ctx.reply(`📱 Scan QR code from terminal → WhatsApp → Linked Devices → Link a Device`);
+bot.command('qr', async (ctx) => {
+    if (currentQR) {
+        const qrBuffer = await qrcode.toBuffer(currentQR);
+        await ctx.replyWithPhoto(
+            { source: qrBuffer },
+            {
+                caption: `
+📱 *SCAN THIS QR CODE*
+
+Open WhatsApp → Linked Devices → Link a Device → Scan
+
+✅ Works for ALL countries!
+                `
+            }
+        );
+    } else {
+        ctx.reply(`❌ QR code not ready yet. Please wait...`);
+    }
 });
 
 bot.command('pair', async (ctx) => {
@@ -177,18 +197,22 @@ bot.command('pair', async (ctx) => {
             try {
                 const code = await sock.requestPairingCode(number);
                 await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `
-🔐 YOUR PAIRING CODE: ${code}
+🔐 *YOUR PAIRING CODE:* ${code}
 
-HOW TO PAIR:
+*HOW TO PAIR:*
 1. Open WhatsApp
-2. Linked Devices
-3. Link a Device
-4. Enter: ${code}
+2. Three Dots → Linked Devices
+3. Tap "Link a Device"
+4. Enter code: ${code}
 
 ✅ Valid for 2 minutes
                 `);
             } catch (err) {
-                await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Failed! Try QR code method: /qr`);
+                await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `
+❌ *Failed to generate code!*
+
+Try QR code method: /qr
+                `);
             }
         }, 3000);
         
@@ -209,24 +233,46 @@ async function startWhatsAppBot() {
         browser: ['XROD MD', 'Chrome', '1.0.0']
     });
     
+    whatsappSock = sock;
+    
     sock.ev.on('creds.update', saveCreds);
     
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
         
         if (qr) {
-            console.log('\n📱 SCAN THIS QR CODE WITH WHATSAPP\n');
-            qrcode.generate(qr, { small: true });
-            console.log('\n1. Open WhatsApp → Linked Devices → Link a Device\n');
+            currentQR = qr;
+            console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+            console.log('📱 NEW QR CODE GENERATED');
+            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+            
+            // Generate QR file for display
+            const qrBuffer = await qrcode.toBuffer(qr);
+            const qrPath = './temp/qr.png';
+            fs.writeFileSync(qrPath, qrBuffer);
+            console.log('✅ QR code saved to temp/qr.png\n');
+            
+            console.log('1. Open WhatsApp');
+            console.log('2. Tap Three Dots (⋮) → Linked Devices');
+            console.log('3. Tap "Link a Device"');
+            console.log('4. Scan this QR code');
+            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
         }
         
         if (connection === 'open') {
-            console.log('\n✅ WHATSAPP BOT CONNECTED!\n📌 Try: .menu on WhatsApp\n');
+            currentQR = null;
+            console.log('\n✅ WHATSAPP BOT CONNECTED SUCCESSFULLY!');
+            console.log('🤖 Bot is now online!\n');
+            console.log('📌 Try: .menu on WhatsApp\n');
         }
         
         if (connection === 'close') {
+            currentQR = null;
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) setTimeout(startWhatsAppBot, 3000);
+            if (shouldReconnect) {
+                console.log('🔄 Reconnecting...');
+                setTimeout(startWhatsAppBot, 3000);
+            }
         }
     });
     
@@ -243,7 +289,6 @@ async function startWhatsAppBot() {
         const args = text.slice(PREFIX.length).trim().split(/ +/);
         const command = args.shift().toLowerCase();
         
-        // Check plugins first
         if (plugins.has(command)) {
             const plugin = plugins.get(command);
             try {
@@ -256,7 +301,6 @@ async function startWhatsAppBot() {
             return;
         }
         
-        // .menu command
         if (command === 'menu') {
             const menu = `
 ╭━━━〔 XROD MD BOT 〕━━━⬣
@@ -286,27 +330,25 @@ async function startWhatsAppBot() {
             `;
             await sock.sendMessage(from, { text: menu });
         }
-        
         else if (command === 'ping') {
             await sock.sendMessage(from, { text: '🏓 Pong! Bot is active' });
         }
-        
         else if (command === 'owner') {
             await sock.sendMessage(from, { text: '👑 Bot Owner: XROD' });
         }
-        
         else if (command === 'channel') {
             await sock.sendMessage(from, { text: `📢 Join: ${WHATSAPP_CHANNEL_LINK}` });
         }
-        
         else {
-            await sock.sendMessage(from, { text: `❌ Command "${command}" not found!\n\nType .menu for available commands.` });
+            await sock.sendMessage(from, { text: `❌ Unknown command. Type .menu` });
         }
     });
 }
 
 // Start both bots
 Promise.all([startWhatsAppBot(), bot.launch()]).then(() => {
-    console.log('\n✅ TELEGRAM BOT STARTED');
-    console.log('✅ WHATSAPP BOT STARTED\n');
+    console.log('\n╔════════════════════════════════════════╗');
+    console.log('║     🤖 TELEGRAM BOT STARTED 🤖        ║');
+    console.log('║     🤖 WHATSAPP BOT STARTED 🤖        ║');
+    console.log('╚════════════════════════════════════════╝\n');
 });
