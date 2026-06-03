@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const qrcode = require('qrcode');
 
-const BOT_TOKEN = '8854531682:AAF6P6NJfrU1nb9-wl85mlnRTdHat7ChKC8;
+const BOT_TOKEN = '8854531682:AAF6P6NJfrU1nb9-wl85mlnRTdHat7ChKC8';
 const WHATSAPP_CHANNEL_LINK = 'https://whatsapp.com/channel/0029VbCWpej7oQhWH4A2HK2k';
 const PREFIX = ".";
 
