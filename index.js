@@ -6,17 +6,7 @@ const chalk = require('chalk');
 const { parsePhoneNumber: PhoneNumber } = require('awesome-phonenumber');
 const readline = require('readline');
 const QRCode = require('qrcode');
-const makeWASocket = require('@whiskeysockets/baileys').default;
-const { 
-    useMultiFileAuthState, 
-    DisconnectReason, 
-    fetchLatestBaileysVersion, 
-    Browsers, 
-    jidDecode, 
-    jidNormalizedUser, 
-    makeCacheableSignalKeyStore, 
-    delay 
-} = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers, jidDecode, jidNormalizedUser, makeCacheableSignalKeyStore, delay } = require('@whiskeysockets/baileys');
 const NodeCache = require('node-cache');
 const pino = require('pino');
 const { Telegraf, Markup } = require('telegraf');
