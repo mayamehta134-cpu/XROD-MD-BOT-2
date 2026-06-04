@@ -6,7 +6,6 @@ const chalk = require('chalk');
 const { parsePhoneNumber: PhoneNumber } = require('awesome-phonenumber');
 const readline = require('readline');
 const QRCode = require('qrcode');
-const { fileURLToPath } = require('url');
 const makeWASocket = require('@whiskeysockets/baileys').default;
 const { 
     useMultiFileAuthState, 
