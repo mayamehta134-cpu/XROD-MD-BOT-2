@@ -1,21 +1,27 @@
 const { Telegraf, Markup } = require('telegraf');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay } = require('@whiskeysockets/baileys');
 const Pino = require('pino');
 const fs = require('fs');
 const path = require('path');
 const qrcode = require('qrcode');
 
+// =============== CONFIGURATION ===============
 const BOT_TOKEN = '8854531682:AAF6P6NJfrU1nb9-wl85mlnRTdHat7ChKC8';
 const WHATSAPP_CHANNEL_LINK = 'https://whatsapp.com/channel/0029VbCWpej7oQhWH4A2HK2k';
 const PREFIX = ".";
 
+// Create directories
+if (!fs.existsSync('./data')) fs.mkdirSync('./data', { recursive: true });
+if (!fs.existsSync('./auth')) fs.mkdirSync('./auth', { recursive: true });
 if (!fs.existsSync('./sessions')) fs.mkdirSync('./sessions');
 if (!fs.existsSync('./temp')) fs.mkdirSync('./temp');
+if (!fs.existsSync('./Plugins')) fs.mkdirSync('./Plugins');
 
+// =============== STORE ===============
 let plugins = new Map();
 let currentQR = null;
-let whatsappSock = null;
 
+// =============== LOAD PLUGINS ===============
 function loadPlugins() {
     const pluginsPath = path.join(__dirname, 'Plugins');
     if (!fs.existsSync(pluginsPath)) return;
@@ -29,7 +35,9 @@ function loadPlugins() {
                     if (plugin.alias) plugin.alias.forEach(alias => plugins.set(alias, plugin));
                 }
                 console.log(`✅ Loaded: ${file}`);
-            } catch(e) {}
+            } catch(e) {
+                console.log(`❌ Error loading ${file}: ${e.message}`);
+            }
         }
     }
 }
@@ -93,46 +101,23 @@ bot.action('get_qr', async (ctx) => {
         const qrBuffer = await qrcode.toBuffer(currentQR);
         await ctx.replyWithPhoto(
             { source: qrBuffer },
-            {
-                caption: `
-📱 *SCAN THIS QR CODE*
-
-1. Open WhatsApp
-2. Tap Three Dots (⋮) → Linked Devices
-3. Tap "Link a Device"
-4. Scan this QR code
-
-✅ *Works for ALL countries!*
-⚠️ *Valid for 2 minutes*
-                `
-            }
+            { caption: `📱 *SCAN THIS QR CODE*\n\nOpen WhatsApp → Linked Devices → Link a Device → Scan\n\n✅ Works for ALL countries!` }
         );
     } else {
-        ctx.reply(`
-❌ *QR code not available!*
-
-Please wait for bot to generate QR code.
-Make sure WhatsApp bot is running on server.
-
-Try again in a few seconds.
-        `);
+        ctx.reply(`❌ QR code not available! Please wait for bot to generate QR code.`);
     }
 });
 
 bot.action('check_status', async (ctx) => {
     await ctx.answerCbQuery();
-    ctx.reply(`
-✅ *Bot online!*
-👥 Active sessions: ${telegramSessions.size}
-📱 QR available: ${currentQR ? '✅ Yes' : '❌ No'}
-    `);
+    ctx.reply(`✅ *Bot online!*\n👥 Active sessions: ${telegramSessions.size}\n📱 QR available: ${currentQR ? '✅ Yes' : '❌ No'}`);
 });
 
 bot.command('help', (ctx) => {
     ctx.reply(`
 📌 *Commands:*
-/pair 923xxxxxxxxx - Get 8-digit pairing code
-/qr - Get QR code photo to scan
+/pair 923xxxxxxxxx - Get pairing code
+/qr - Get QR code photo
 /status - Check bot status
     `);
 });
@@ -146,15 +131,7 @@ bot.command('qr', async (ctx) => {
         const qrBuffer = await qrcode.toBuffer(currentQR);
         await ctx.replyWithPhoto(
             { source: qrBuffer },
-            {
-                caption: `
-📱 *SCAN THIS QR CODE*
-
-Open WhatsApp → Linked Devices → Link a Device → Scan
-
-✅ Works for ALL countries!
-                `
-            }
+            { caption: `📱 *SCAN THIS QR CODE*\n\nOpen WhatsApp → Linked Devices → Link a Device → Scan` }
         );
     } else {
         ctx.reply(`❌ QR code not ready yet. Please wait...`);
@@ -163,14 +140,10 @@ Open WhatsApp → Linked Devices → Link a Device → Scan
 
 bot.command('pair', async (ctx) => {
     const args = ctx.message.text.split(' ');
-    if (args.length < 2) {
-        return ctx.reply(`❌ Usage: /pair 923xxxxxxxxx`);
-    }
+    if (args.length < 2) return ctx.reply(`❌ Usage: /pair 923xxxxxxxxx`);
     
     let number = args[1].replace(/\D/g, '');
-    if (number.length < 10 || number.length > 15) {
-        return ctx.reply('❌ Invalid number!');
-    }
+    if (number.length < 10 || number.length > 15) return ctx.reply('❌ Invalid number!');
     
     const msg = await ctx.reply(`🔄 Generating code for +${number}...`);
     
@@ -208,11 +181,7 @@ bot.command('pair', async (ctx) => {
 ✅ Valid for 2 minutes
                 `);
             } catch (err) {
-                await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `
-❌ *Failed to generate code!*
-
-Try QR code method: /qr
-                `);
+                await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Failed! Try QR code method: /qr`);
             }
         }, 3000);
         
@@ -233,8 +202,6 @@ async function startWhatsAppBot() {
         browser: ['XROD MD', 'Chrome', '1.0.0']
     });
     
-    whatsappSock = sock;
-    
     sock.ev.on('creds.update', saveCreds);
     
     sock.ev.on('connection.update', async (update) => {
@@ -242,28 +209,14 @@ async function startWhatsAppBot() {
         
         if (qr) {
             currentQR = qr;
-            console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-            console.log('📱 NEW QR CODE GENERATED');
-            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-            
-            // Generate QR file for display
+            console.log('\n📱 NEW QR CODE GENERATED - SCAN TO PAIR\n');
             const qrBuffer = await qrcode.toBuffer(qr);
-            const qrPath = './temp/qr.png';
-            fs.writeFileSync(qrPath, qrBuffer);
-            console.log('✅ QR code saved to temp/qr.png\n');
-            
-            console.log('1. Open WhatsApp');
-            console.log('2. Tap Three Dots (⋮) → Linked Devices');
-            console.log('3. Tap "Link a Device"');
-            console.log('4. Scan this QR code');
-            console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+            fs.writeFileSync('./temp/qr.png', qrBuffer);
         }
         
         if (connection === 'open') {
             currentQR = null;
-            console.log('\n✅ WHATSAPP BOT CONNECTED SUCCESSFULLY!');
-            console.log('🤖 Bot is now online!\n');
-            console.log('📌 Try: .menu on WhatsApp\n');
+            console.log('\n✅ WHATSAPP BOT CONNECTED!\n📌 Try: .menu on WhatsApp\n');
         }
         
         if (connection === 'close') {
@@ -345,10 +298,15 @@ async function startWhatsAppBot() {
     });
 }
 
-// Start both bots
-Promise.all([startWhatsAppBot(), bot.launch()]).then(() => {
-    console.log('\n╔════════════════════════════════════════╗');
-    console.log('║     🤖 TELEGRAM BOT STARTED 🤖        ║');
-    console.log('║     🤖 WHATSAPP BOT STARTED 🤖        ║');
-    console.log('╚════════════════════════════════════════╝\n');
+// ========== START ==========
+(async () => {
+    await startWhatsAppBot();
+    await bot.launch();
+    console.log('\n✅ BOTS STARTED SUCCESSFULLY!\n');
+})();
+
+// Graceful shutdown
+process.once('SIGINT', () => {
+    console.log('\n🛑 Shutting down...');
+    process.exit(0);
 });
