@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "XROD MD - Complete WhatsApp Bot with Telegram Pairing System",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js"
   },
