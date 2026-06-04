@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node index.js",
     "telegram": "node telegram.js",
-    "both": "npm run start & npm run telegram"
+    "both": "node index.js & node telegram.js"
   },
   "keywords": [
     "whatsapp-bot",
@@ -25,8 +25,7 @@
     "chalk": "^4.1.2",
     "awesome-phonenumber": "^6.9.0",
     "node-cache": "^5.1.2",
-    "pino": "^8.17.2",
-    "dotenv": "^16.3.1"
+    "pino": "^8.17.2"
   },
   "engines": {
     "node": ">=18.0.0"
