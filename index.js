@@ -29,9 +29,32 @@ const tgBot = new Telegraf(BOT_TOKEN);
 const telegramSessions = new Map();
 let currentQR = null;
 
-tgBot.start((ctx) => {
-    ctx.replyWithPhoto('https://graph.org/file/02abf0fd8fc2a13cc67a1.jpg', {
-        caption: `
+// =============== RETRY FUNCTION FOR TELEGRAM ===============
+async function sendWithRetry(ctx, method, ...args) {
+    let lastError;
+    for (let i = 0; i < 3; i++) {
+        try {
+            if (method === 'photo') {
+                return await ctx.replyWithPhoto(...args, { timeout: 60000 });
+            } else if (method === 'message') {
+                return await ctx.reply(...args, { timeout: 60000 });
+            } else if (method === 'edit') {
+                return await ctx.telegram.editMessageText(...args, { timeout: 60000 });
+            }
+        } catch (err) {
+            lastError = err;
+            console.log(`Attempt ${i + 1} failed: ${err.message}`);
+            if (i < 2) await new Promise(resolve => setTimeout(resolve, 2000 * (i + 1)));
+        }
+    }
+    throw lastError;
+}
+
+// Telegram Bot Commands with Retry
+tgBot.start(async (ctx) => {
+    try {
+        await sendWithRetry(ctx, 'photo', 'https://graph.org/file/02abf0fd8fc2a13cc67a1.jpg', {
+            caption: `
 ╭━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╮
 ┃     🤖 XROD PAIRING BOT 🤖         ┃
 ╰━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╯
@@ -44,42 +67,57 @@ tgBot.start((ctx) => {
 /status - Check bot status
 
 *Made with ❤️ by XROD*`,
-        reply_markup: {
-            inline_keyboard: [
-                [{ text: '📱 JOIN WHATSAPP CHANNEL', url: WHATSAPP_CHANNEL_LINK }],
-                [{ text: '🔐 GET PAIRING CODE', callback_data: 'get_pairing' }],
-                [{ text: '📱 GET QR CODE', callback_data: 'get_qr' }],
-                [{ text: '📊 CHECK STATUS', callback_data: 'check_status' }]
-            ]
-        }
-    });
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '📱 JOIN WHATSAPP CHANNEL', url: WHATSAPP_CHANNEL_LINK }],
+                    [{ text: '🔐 GET PAIRING CODE', callback_data: 'get_pairing' }],
+                    [{ text: '📱 GET QR CODE', callback_data: 'get_qr' }],
+                    [{ text: '📊 CHECK STATUS', callback_data: 'check_status' }]
+                ]
+            }
+        });
+    } catch (err) {
+        console.log('Start command error:', err.message);
+        await sendWithRetry(ctx, 'message', `⚠️ Bot started! Use /pair or /qr`);
+    }
 });
 
 tgBot.action('get_pairing', async (ctx) => {
-    await ctx.answerCbQuery();
-    ctx.reply(`🔐 Send /pair 923001234567\n\n🇵🇰 Pakistan: 923xxxxxxxxx\n🇺🇸 USA: 1xxxxxxxxxx`);
+    await ctx.answerCbQuery().catch(() => {});
+    try {
+        await sendWithRetry(ctx, 'message', `🔐 Send /pair 923001234567\n\n🇵🇰 Pakistan: 923xxxxxxxxx\n🇺🇸 USA: 1xxxxxxxxxx`);
+    } catch (err) {
+        console.log('Action get_pairing error:', err.message);
+    }
 });
 
 tgBot.action('get_qr', async (ctx) => {
-    await ctx.answerCbQuery();
+    await ctx.answerCbQuery().catch(() => {});
     if (currentQR) {
-        const qrBuffer = await QRCode.toBuffer(currentQR);
-        await ctx.replyWithPhoto({ source: qrBuffer }, { caption: `📱 Scan this QR code with WhatsApp` });
-    } else { ctx.reply(`❌ QR code not available!`); }
+        try {
+            const qrBuffer = await QRCode.toBuffer(currentQR);
+            await sendWithRetry(ctx, 'photo', { source: qrBuffer }, { caption: `📱 Scan this QR code with WhatsApp` });
+        } catch (err) {
+            console.log('QR send error:', err.message);
+            await sendWithRetry(ctx, 'message', `❌ QR code available but send failed! Try /qr again.`);
+        }
+    } else {
+        await sendWithRetry(ctx, 'message', `❌ QR code not available!`);
+    }
 });
 
 tgBot.action('check_status', async (ctx) => {
-    await ctx.answerCbQuery();
-    ctx.reply(`✅ Bot online! QR: ${currentQR ? 'Yes' : 'No'}`);
+    await ctx.answerCbQuery().catch(() => {});
+    await sendWithRetry(ctx, 'message', `✅ Bot online! QR: ${currentQR ? 'Yes' : 'No'}`);
 });
 
 tgBot.command('pair', async (ctx) => {
     const args = ctx.message.text.split(' ');
-    if (args.length < 2) return ctx.reply(`❌ Usage: /pair 923xxxxxxxxx`);
+    if (args.length < 2) return sendWithRetry(ctx, 'message', `❌ Usage: /pair 923xxxxxxxxx`);
     let number = args[1].replace(/\D/g, '');
-    if (number.length < 10 || number.length > 15) return ctx.reply('❌ Invalid number!');
+    if (number.length < 10 || number.length > 15) return sendWithRetry(ctx, 'message', '❌ Invalid number!');
     
-    const msg = await ctx.reply(`🔄 Generating code for +${number}...`);
+    const msg = await sendWithRetry(ctx, 'message', `🔄 Generating code for +${number}...`);
     try {
         const sessionId = `session_${number}_${Date.now()}`;
         const sessionPath = `./sessions/${sessionId}`;
@@ -96,29 +134,36 @@ tgBot.command('pair', async (ctx) => {
         setTimeout(async () => {
             try {
                 const code = await sock.requestPairingCode(number);
-                await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `
-🔐 YOUR PAIRING CODE: ${code}
-
-HOW TO PAIR:
-1. Open WhatsApp
-2. Linked Devices → Link a Device
-3. Enter this code
-
-✅ Valid for 2 minutes`);
-            } catch(e) { await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, null, `❌ Failed! Use /qr`); }
+                await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, `🔐 YOUR PAIRING CODE: ${code}\n\nHOW TO PAIR:\n1. Open WhatsApp\n2. Linked Devices → Link a Device\n3. Enter this code\n\n✅ Valid for 2 minutes`, { timeout: 60000 });
+            } catch(e) {
+                await ctx.telegram.editMessageText(ctx.chat.id, msg.message_id, `❌ Failed! Use /qr`, { timeout: 60000 });
+            }
         }, 3000);
-    } catch(e) { ctx.reply(`❌ Error!`); }
+    } catch(e) { sendWithRetry(ctx, 'message', `❌ Error!`); }
 });
 
 tgBot.command('qr', async (ctx) => {
     if (currentQR) {
-        const qrBuffer = await QRCode.toBuffer(currentQR);
-        await ctx.replyWithPhoto({ source: qrBuffer }, { caption: `📱 Scan this QR code` });
-    } else { ctx.reply(`❌ QR not ready`); }
+        try {
+            const qrBuffer = await QRCode.toBuffer(currentQR);
+            await sendWithRetry(ctx, 'photo', { source: qrBuffer }, { caption: `📱 Scan this QR code` });
+        } catch (err) {
+            console.log('QR command error:', err.message);
+            await sendWithRetry(ctx, 'message', `❌ QR send failed! Try again.`);
+        }
+    } else {
+        await sendWithRetry(ctx, 'message', `❌ QR not ready yet. Please wait...`);
+    }
 });
 
-tgBot.command('status', (ctx) => ctx.reply(`✅ Bot online!`));
-tgBot.command('help', (ctx) => ctx.reply(`/pair 923xxxxxxxxx\n/qr\n/status`));
+tgBot.command('status', (ctx) => sendWithRetry(ctx, 'message', `✅ Bot online!`));
+tgBot.command('help', (ctx) => sendWithRetry(ctx, 'message', `/pair 923xxxxxxxxx\n/qr\n/status`));
+
+// Launch Telegram Bot with better options
+tgBot.launch({
+    allowedUpdates: ['message', 'callback_query'],
+    timeout: 60
+}).catch(err => console.log('Telegram launch error:', err.message));
 
 // =============== STORE & DATA SETUP ===============
 let store = { contacts: {}, messages: {}, settings: {} };
@@ -225,9 +270,8 @@ async function startBot() {
 console.log(chalk.cyan(`\n╔════════════════════════════════════════╗\n║        🤖 XROD MD BOT STARTING 🤖      ║\n╚════════════════════════════════════════╝\n`));
 loadCommands();
 
-Promise.all([startBot(), tgBot.launch()]).then(() => {
-    console.log(chalk.green('\n✅ TELEGRAM BOT STARTED\n✅ WHATSAPP BOT STARTED\n'));
-}).catch((error) => {
+// Start WhatsApp Bot only (Telegram already launched)
+startBot().catch((error) => {
     console.log(chalk.red(`❌ Fatal error: ${error.message}`));
     process.exit(1);
 });
