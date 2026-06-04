@@ -10,7 +10,6 @@ const { parsePhoneNumber: PhoneNumber } = require('awesome-phonenumber');
 const config = {
     botName: "XROD MD",
     ownerNumber: "923051391005",
-    pairingNumber: "923051391005",
     prefixes: ["."]
 };
 
@@ -67,7 +66,6 @@ async function handleMessages(sock, messages) {
     const args = text.slice(PREFIX.length).trim().split(/ +/);
     const command = args.shift().toLowerCase();
     
-    // Check plugins
     if (commands.has(command)) {
         try {
             await commands.get(command).run({
@@ -80,7 +78,6 @@ async function handleMessages(sock, messages) {
         return;
     }
     
-    // Built-in commands
     if (command === 'menu') {
         const menu = `
 ╭━━━〔 XROD MD BOT 〕━━━⬣
@@ -174,20 +171,6 @@ async function startBot() {
         await handleMessages(sock, messages);
     });
     
-    // Generate pairing code (for Pakistan numbers)
-    if (!state.creds?.registered && config.pairingNumber) {
-        setTimeout(async () => {
-            try {
-                let code = await sock.requestPairingCode(config.pairingNumber);
-                code = code?.match(/.{1,4}/g)?.join("-") || code;
-                console.log(chalk.bgGreen(`\n🔐 PAIRING CODE: ${code}\n`));
-                console.log(chalk.cyan('👉 WhatsApp → Linked Devices → Link a Device → Enter code\n'));
-            } catch(e) {
-                console.log(chalk.red('❌ Invalid number! Use 923xxxxxxxxx format'));
-            }
-        }, 3000);
-    }
-    
     return sock;
 }
 
@@ -201,7 +184,6 @@ console.log(chalk.cyan(`
 loadCommands();
 startBot().catch(console.error);
 
-// Graceful shutdown
 process.on('SIGINT', () => {
     console.log(chalk.yellow('\n🛑 Shutting down...'));
     process.exit(0);
