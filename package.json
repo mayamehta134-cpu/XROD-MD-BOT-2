@@ -5,8 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "qr": "node index.js --qr-code",
-    "dev": "nodemon index.js"
+    "telegram": "node telegram.js",
+    "both": "npm run start & npm run telegram"
   },
   "keywords": [
     "whatsapp-bot",
@@ -26,11 +26,7 @@
     "awesome-phonenumber": "^6.9.0",
     "node-cache": "^5.1.2",
     "pino": "^8.17.2",
-    "dotenv": "^16.3.1",
-    "install": "^0.13.0"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
+    "dotenv": "^16.3.1"
   },
   "engines": {
     "node": ">=18.0.0"
