@@ -4,7 +4,6 @@ const fs = require('fs');
 const path = require('path');
 const QRCode = require('qrcode');
 const chalk = require('chalk');
-const { parsePhoneNumber: PhoneNumber } = require('awesome-phonenumber');
 
 // =============== CONFIG ===============
 const config = {
@@ -146,6 +145,8 @@ async function startBot() {
         
         if (qr) {
             currentQR = qr;
+            // Save QR to file for telegram bot
+            fs.writeFileSync('./session/qr.json', JSON.stringify({ qr }));
             console.log(chalk.yellow('\n📱 QR CODE GENERATED\n'));
             const qrString = await QRCode.toString(qr, { type: 'terminal', small: true });
             console.log(qrString);
