@@ -1,52 +1,38 @@
-const { Telegraf, Markup } = require('telegraf');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay } = require('@whiskeysockets/baileys');
-const Pino = require('pino');
-const fs = require('fs');
-const path = require('path');
-const qrcode = require('qrcode');
+import 'dotenv/config';
+import fs, { existsSync, mkdirSync, rmSync } from 'fs';
+import path, { dirname } from 'path';
+import chalk from 'chalk';
+import { parsePhoneNumber as PhoneNumber } from 'awesome-phonenumber';
+import readline from 'readline';
+import QRCode from 'qrcode';
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers, jidDecode, jidNormalizedUser, makeCacheableSignalKeyStore, delay } from '@whiskeysockets/baileys';
+import NodeCache from 'node-cache';
+import pino from 'pino';
+import { Telegraf, Markup } from 'telegraf';
 
 // =============== CONFIGURATION ===============
 const BOT_TOKEN = '8854531682:AAF6P6NJfrU1nb9-wl85mlnRTdHat7ChKC8';
 const WHATSAPP_CHANNEL_LINK = 'https://whatsapp.com/channel/0029VbCWpej7oQhWH4A2HK2k';
+const config = {
+    botName: "XROD MD",
+    ownerNumber: "923051391005",
+    pairingNumber: "",
+    prefixes: ["."],
+    storeWriteInterval: 10000
+};
+
 const PREFIX = ".";
 
-// Create directories
-if (!fs.existsSync('./data')) fs.mkdirSync('./data', { recursive: true });
-if (!fs.existsSync('./auth')) fs.mkdirSync('./auth', { recursive: true });
-if (!fs.existsSync('./sessions')) fs.mkdirSync('./sessions');
-if (!fs.existsSync('./temp')) fs.mkdirSync('./temp');
-if (!fs.existsSync('./Plugins')) fs.mkdirSync('./Plugins');
-
-// =============== STORE ===============
-let plugins = new Map();
+// =============== TELEGRAM BOT SETUP ===============
+const tgBot = new Telegraf(BOT_TOKEN);
+const telegramSessions = new Map();
 let currentQR = null;
 
-// =============== LOAD PLUGINS ===============
-function loadPlugins() {
-    const pluginsPath = path.join(__dirname, 'Plugins');
-    if (!fs.existsSync(pluginsPath)) return;
-    const files = fs.readdirSync(pluginsPath);
-    for (const file of files) {
-        if (file.endsWith('.js')) {
-            try {
-                const plugin = require(`./Plugins/${file}`);
-                if (plugin.name) {
-                    plugins.set(plugin.name, plugin);
-                    if (plugin.alias) plugin.alias.forEach(alias => plugins.set(alias, plugin));
-                }
-                console.log(`✅ Loaded: ${file}`);
-            } catch(e) {
-                console.log(`❌ Error loading ${file}: ${e.message}`);
-            }
-        }
-    }
-}
-
-// =============== TELEGRAM BOT ===============
-const bot = new Telegraf(BOT_TOKEN);
-const telegramSessions = new Map();
-
-bot.start((ctx) => {
+// Telegram Bot Commands
+tgBot.start((ctx) => {
     ctx.replyWithPhoto(
         'https://graph.org/file/02abf0fd8fc2a13cc67a1.jpg',
         {
@@ -79,7 +65,7 @@ bot.start((ctx) => {
     );
 });
 
-bot.action('get_pairing', async (ctx) => {
+tgBot.action('get_pairing', async (ctx) => {
     await ctx.answerCbQuery();
     ctx.reply(`
 🔐 *Get Pairing Code*
@@ -94,11 +80,10 @@ Send your WhatsApp number:
     `);
 });
 
-bot.action('get_qr', async (ctx) => {
+tgBot.action('get_qr', async (ctx) => {
     await ctx.answerCbQuery();
-    
     if (currentQR) {
-        const qrBuffer = await qrcode.toBuffer(currentQR);
+        const qrBuffer = await QRCode.toBuffer(currentQR);
         await ctx.replyWithPhoto(
             { source: qrBuffer },
             { caption: `📱 *SCAN THIS QR CODE*\n\nOpen WhatsApp → Linked Devices → Link a Device → Scan\n\n✅ Works for ALL countries!` }
@@ -108,12 +93,12 @@ bot.action('get_qr', async (ctx) => {
     }
 });
 
-bot.action('check_status', async (ctx) => {
+tgBot.action('check_status', async (ctx) => {
     await ctx.answerCbQuery();
     ctx.reply(`✅ *Bot online!*\n👥 Active sessions: ${telegramSessions.size}\n📱 QR available: ${currentQR ? '✅ Yes' : '❌ No'}`);
 });
 
-bot.command('help', (ctx) => {
+tgBot.command('help', (ctx) => {
     ctx.reply(`
 📌 *Commands:*
 /pair 923xxxxxxxxx - Get pairing code
@@ -122,13 +107,13 @@ bot.command('help', (ctx) => {
     `);
 });
 
-bot.command('status', (ctx) => {
+tgBot.command('status', (ctx) => {
     ctx.reply(`✅ Bot online! 👥 ${telegramSessions.size} active sessions`);
 });
 
-bot.command('qr', async (ctx) => {
+tgBot.command('qr', async (ctx) => {
     if (currentQR) {
-        const qrBuffer = await qrcode.toBuffer(currentQR);
+        const qrBuffer = await QRCode.toBuffer(currentQR);
         await ctx.replyWithPhoto(
             { source: qrBuffer },
             { caption: `📱 *SCAN THIS QR CODE*\n\nOpen WhatsApp → Linked Devices → Link a Device → Scan` }
@@ -138,7 +123,7 @@ bot.command('qr', async (ctx) => {
     }
 });
 
-bot.command('pair', async (ctx) => {
+tgBot.command('pair', async (ctx) => {
     const args = ctx.message.text.split(' ');
     if (args.length < 2) return ctx.reply(`❌ Usage: /pair 923xxxxxxxxx`);
     
@@ -150,13 +135,14 @@ bot.command('pair', async (ctx) => {
     try {
         const sessionId = `session_${number}_${Date.now()}`;
         const sessionPath = `./sessions/${sessionId}`;
+        if (!fs.existsSync('./sessions')) fs.mkdirSync('./sessions');
         
         const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
         
         const sock = makeWASocket({
             auth: state,
             printQRInTerminal: false,
-            logger: Pino({ level: 'silent' }),
+            logger: pino({ level: 'silent' }),
             browser: ['XROD Pair', 'Chrome', '1.0.0']
         });
         
@@ -190,72 +176,126 @@ bot.command('pair', async (ctx) => {
     }
 });
 
-// =============== WHATSAPP BOT ===============
-async function startWhatsAppBot() {
-    loadPlugins();
-    
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info_baileys');
-    
-    const sock = makeWASocket({
-        auth: state,
-        logger: Pino({ level: 'silent' }),
-        browser: ['XROD MD', 'Chrome', '1.0.0']
-    });
-    
-    sock.ev.on('creds.update', saveCreds);
-    
-    sock.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
-        
-        if (qr) {
-            currentQR = qr;
-            console.log('\n📱 NEW QR CODE GENERATED - SCAN TO PAIR\n');
-            const qrBuffer = await qrcode.toBuffer(qr);
-            fs.writeFileSync('./temp/qr.png', qrBuffer);
-        }
-        
-        if (connection === 'open') {
-            currentQR = null;
-            console.log('\n✅ WHATSAPP BOT CONNECTED!\n📌 Try: .menu on WhatsApp\n');
-        }
-        
-        if (connection === 'close') {
-            currentQR = null;
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) {
-                console.log('🔄 Reconnecting...');
-                setTimeout(startWhatsAppBot, 3000);
+// =============== STORE SETUP ===============
+let store = {
+    contacts: {},
+    messages: {},
+    settings: {
+        autoread: false,
+        autobio: false,
+        antidelete: false,
+        stealthMode: false
+    },
+    getSetting: async (scope, key) => { return store.settings[key] || false; },
+    loadMessage: async (jid, id) => { return store.messages[jid]?.[id]; },
+    bind: (ev) => {
+        ev.on('messages.upsert', ({ messages }) => {
+            for (const msg of messages) {
+                if (!msg.key?.remoteJid || !msg.key?.id) continue;
+                const jid = msg.key.remoteJid;
+                if (!store.messages[jid]) store.messages[jid] = {};
+                store.messages[jid][msg.key.id] = msg;
             }
-        }
-    });
-    
-    // WhatsApp Command Handler
-    sock.ev.on('messages.upsert', async ({ messages }) => {
-        const msg = messages[0];
-        if (!msg.message) return;
-        
-        const from = msg.key.remoteJid;
-        const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
-        
-        if (!text.startsWith(PREFIX)) return;
-        
-        const args = text.slice(PREFIX.length).trim().split(/ +/);
-        const command = args.shift().toLowerCase();
-        
-        if (plugins.has(command)) {
-            const plugin = plugins.get(command);
+        });
+    }
+};
+
+// =============== DATA DIRECTORY SETUP ===============
+const DATA_DEFAULTS = {
+    'owner.json': [],
+    'settings.json': { autoread: false, autobio: false, antidelete: false, stealthMode: false }
+};
+
+fs.mkdirSync('./data', { recursive: true });
+for (const [file, def] of Object.entries(DATA_DEFAULTS)) {
+    const fp = `./data/${file}`;
+    if (!fs.existsSync(fp)) fs.writeFileSync(fp, JSON.stringify(def, null, 2));
+}
+
+let owner = [];
+try { owner = JSON.parse(fs.readFileSync('./data/owner.json', 'utf-8')); } catch { owner = []; }
+
+global.botname = config.botName || "XROD MD";
+global.themeemoji = "•";
+
+// =============== PAIRING MODE SETUP ===============
+const pairingCode = !process.argv.includes("--qr-code");
+let rl = null;
+let rlClosed = false;
+
+if (process.stdin.isTTY && !config.pairingNumber) {
+    rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+    rl.on('close', () => { rlClosed = true; });
+}
+
+const question = (text) => {
+    if (rl && !rlClosed) return new Promise((resolve) => rl.question(text, resolve));
+    else return Promise.resolve(config.ownerNumber || "923051391005");
+};
+
+process.on('exit', () => { if (rl && !rlClosed) rl.close(); });
+process.on('SIGINT', () => { if (rl && !rlClosed) rl.close(); process.exit(0); });
+
+// =============== SESSION MANAGEMENT ===============
+function ensureSessionDirectory() {
+    const sessionPath = path.join(__dirname, 'session');
+    if (!existsSync(sessionPath)) mkdirSync(sessionPath, { recursive: true });
+    return sessionPath;
+}
+
+// =============== COMMAND HANDLER ===============
+const commands = new Map();
+
+function loadCommands() {
+    const pluginsPath = path.join(__dirname, 'Plugins');
+    if (!existsSync(pluginsPath)) {
+        console.log('📁 Plugins folder not found!');
+        return;
+    }
+    const files = fs.readdirSync(pluginsPath);
+    for (const file of files) {
+        if (file.endsWith('.js')) {
             try {
-                await plugin.run({
-                    XROD: sock, m: msg, inputCMD: command, text: args.join(' '), from,
-                    conn: sock, message: msg,
-                    reply: async (txt) => await sock.sendMessage(from, { text: txt })
-                });
-            } catch(e) { console.log(e); }
-            return;
+                const cmd = require(`./Plugins/${file}`);
+                if (cmd.name) {
+                    commands.set(cmd.name, cmd);
+                    if (cmd.alias) cmd.alias.forEach(alias => commands.set(alias, cmd));
+                    console.log(`✅ Loaded: ${file}`);
+                }
+            } catch(e) { console.log(`❌ Error loading ${file}: ${e.message}`); }
         }
-        
-        if (command === 'menu') {
-            const menu = `
+    }
+    console.log(`\n📦 Total ${commands.size} commands loaded!\n`);
+}
+
+// =============== MESSAGE HANDLER ===============
+async function handleMessages(sock, chatUpdate) {
+    const msg = chatUpdate.messages[0];
+    if (!msg.message) return;
+    
+    const from = msg.key.remoteJid;
+    const text = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
+    
+    if (!text.startsWith(PREFIX)) return;
+    
+    const args = text.slice(PREFIX.length).trim().split(/ +/);
+    const command = args.shift().toLowerCase();
+    
+    if (commands.has(command)) {
+        const cmd = commands.get(command);
+        try {
+            await cmd.run({
+                XROD: sock, m: msg, inputCMD: command, text: args.join(' '), from,
+                conn: sock, message: msg,
+                reply: async (txt) => await sock.sendMessage(from, { text: txt }),
+                isOwner: owner.includes(msg.key.participant?.split('@')[0])
+            });
+        } catch(e) { console.log(`Error in ${command}:`, e); await sock.sendMessage(from, { text: '❌ Error executing command!' }); }
+        return;
+    }
+    
+    if (command === 'menu') {
+        const menu = `
 ╭━━━〔 XROD MD BOT 〕━━━⬣
 ┃ 👑 .ownermenu
 ┃ 🤖 .aimenu
@@ -280,33 +320,168 @@ async function startWhatsAppBot() {
 ╰━━━━━━━━━━━━━━⬣
 
 > Type .[menu_name] to open any menu
-            `;
-            await sock.sendMessage(from, { text: menu });
-        }
-        else if (command === 'ping') {
-            await sock.sendMessage(from, { text: '🏓 Pong! Bot is active' });
-        }
-        else if (command === 'owner') {
-            await sock.sendMessage(from, { text: '👑 Bot Owner: XROD' });
-        }
-        else if (command === 'channel') {
-            await sock.sendMessage(from, { text: `📢 Join: ${WHATSAPP_CHANNEL_LINK}` });
-        }
-        else {
-            await sock.sendMessage(from, { text: `❌ Unknown command. Type .menu` });
-        }
-    });
+        `;
+        await sock.sendMessage(from, { text: menu });
+    }
+    else if (command === 'ping') {
+        await sock.sendMessage(from, { text: '🏓 Pong! Bot is active' });
+    }
+    else if (command === 'owner') {
+        await sock.sendMessage(from, { text: `👑 Owner: ${owner[0] || config.ownerNumber}` });
+    }
+    else if (command === 'channel') {
+        await sock.sendMessage(from, { text: `📢 Join: ${WHATSAPP_CHANNEL_LINK}` });
+    }
+    else {
+        await sock.sendMessage(from, { text: `❌ Unknown command. Type .menu` });
+    }
 }
 
-// ========== START ==========
-(async () => {
-    await startWhatsAppBot();
-    await bot.launch();
-    console.log('\n✅ BOTS STARTED SUCCESSFULLY!\n');
-})();
+// =============== MAIN BOT FUNCTION ===============
+async function startBot() {
+    try {
+        const { version } = await fetchLatestBaileysVersion();
+        ensureSessionDirectory();
+        
+        const { state, saveCreds } = await useMultiFileAuthState(`./session`);
+        const msgRetryCounterCache = new NodeCache();
+        
+        const sock = makeWASocket({
+            version,
+            logger: pino({ level: 'silent' }),
+            browser: Browsers.macOS('Chrome'),
+            auth: {
+                creds: state.creds,
+                keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }).child({ level: "fatal" })),
+            },
+            markOnlineOnConnect: true,
+            generateHighQualityLinkPreview: true,
+            syncFullHistory: false,
+            msgRetryCounterCache,
+            defaultQueryTimeoutMs: 60000,
+            connectTimeoutMs: 60000,
+            keepAliveIntervalMs: 10000,
+        });
+        
+        sock.ev.on('creds.update', saveCreds);
+        store.bind(sock.ev);
+        
+        sock.ev.on('messages.upsert', async (chatUpdate) => {
+            await handleMessages(sock, chatUpdate);
+        });
+        
+        sock.decodeJid = (jid) => {
+            if (!jid) return jid;
+            if (/:\d+@/gi.test(jid)) {
+                const decode = jidDecode(jid) || {};
+                return decode.user && decode.server && `${decode.user}@${decode.server}` || jid;
+            } else return jid;
+        };
+        
+        sock.getName = (jid) => {
+            const id = sock.decodeJid(jid);
+            if (id.endsWith("@g.us")) return "Group";
+            return store.contacts[id]?.name || id.split('@')[0];
+        };
+        
+        sock.public = true;
+        
+        const isRegistered = state.creds?.registered === true;
+        
+        if (pairingCode && !isRegistered) {
+            let phoneNumberInput;
+            if (config.pairingNumber) phoneNumberInput = config.pairingNumber;
+            else if (rl && !rlClosed) phoneNumberInput = await question(chalk.bgBlack(chalk.greenBright(`📱 Enter your WhatsApp number:\nFormat: 923001234567: `)));
+            else phoneNumberInput = config.ownerNumber;
+            
+            phoneNumberInput = phoneNumberInput.replace(/[^0-9]/g, '');
+            const pn = PhoneNumber(`+${phoneNumberInput}`);
+            
+            if (!pn.valid) {
+                console.log(chalk.red('❌ Invalid phone number!'));
+                if (rl && !rlClosed) rl.close();
+                process.exit(1);
+            }
+            
+            const doPairing = async (num, attempt = 1) => {
+                try {
+                    let code = await sock.requestPairingCode(num);
+                    code = code?.match(/.{1,4}/g)?.join("-") || code;
+                    console.log(chalk.black(chalk.bgGreen(`\n🔐 YOUR PAIRING CODE: ${code}\n`)));
+                    if (rl && !rlClosed) { rl.close(); rl = null; }
+                } catch (error) {
+                    if (attempt < 3) {
+                        try { rmSync('./session', { recursive: true, force: true }); } catch(e) {}
+                        await delay(3000);
+                        startBot();
+                    } else console.log(chalk.red('❌ Pairing failed. Restart manually.'));
+                }
+            };
+            setTimeout(() => doPairing(phoneNumberInput), 3000);
+        }
+        
+        sock.ev.on('connection.update', async (s) => {
+            const { connection, lastDisconnect, qr } = s;
+            
+            if (qr) {
+                currentQR = qr;
+                if (!pairingCode) {
+                    try { console.log(await QRCode.toString(qr, { type: 'terminal', small: true })); }
+                    catch(e) { console.log('QR:', qr); }
+                }
+            }
+            
+            if (connection === "open") {
+                currentQR = null;
+                console.log(chalk.green('\n✅ XROD MD BOT CONNECTED SUCCESSFULLY!'));
+                console.log(chalk.cyan(`🤖 Bot: ${config.botName}`));
+                console.log(chalk.cyan(`📌 Try: .menu on WhatsApp\n`));
+                if (rl && !rlClosed) { rl.close(); rl = null; }
+            }
+            
+            if (connection === 'close') {
+                currentQR = null;
+                const statusCode = lastDisconnect?.error?.output?.statusCode;
+                const shouldReconnect = statusCode !== DisconnectReason.loggedOut && statusCode !== 401;
+                
+                if (statusCode === DisconnectReason.loggedOut || statusCode === 401) {
+                    try { rmSync('./session', { recursive: true, force: true }); } catch(e) {}
+                    await delay(3000);
+                    startBot();
+                    return;
+                }
+                if (shouldReconnect) {
+                    console.log(chalk.yellow('🔄 Reconnecting in 5 seconds...'));
+                    await delay(5000);
+                    startBot();
+                }
+            }
+        });
+        
+        return sock;
+    } catch (error) {
+        console.log(chalk.red(`❌ Error: ${error.message}`));
+        if (rl && !rlClosed) { rl.close(); rl = null; }
+        await delay(5000);
+        startBot();
+    }
+}
 
-// Graceful shutdown
-process.once('SIGINT', () => {
-    console.log('\n🛑 Shutting down...');
-    process.exit(0);
+// ========== STARTUP ==========
+console.log(chalk.cyan(`
+╔════════════════════════════════════════╗
+║        🤖 XROD MD BOT STARTING 🤖      ║
+╚════════════════════════════════════════╝
+`));
+
+loadCommands();
+
+// Start both bots
+Promise.all([startBot(), tgBot.launch()]).then(() => {
+    console.log(chalk.green('\n✅ TELEGRAM BOT STARTED'));
+    console.log(chalk.green('✅ WHATSAPP BOT STARTED\n'));
+}).catch((error) => {
+    console.log(chalk.red(`❌ Fatal error: ${error.message}`));
+    if (rl && !rlClosed) rl.close();
+    process.exit(1);
 });
